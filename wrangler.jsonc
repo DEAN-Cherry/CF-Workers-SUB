@@ -1,0 +1,15 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "sub-worker",
+  "main": "_worker.js",
+  "compatibility_date": "2025-07-23",
+  "keep_vars": true,
+  "observability": {
+    "enabled": true
+  },
+
+  // Optional KV binding. Keep commented unless you have a real namespace ID.
+  // "kv_namespaces": [
+  //   { "binding": "KV", "id": "<your-kv-namespace-id>" }
+  // ]
+}
