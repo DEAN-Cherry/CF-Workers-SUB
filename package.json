@@ -1,0 +1,10 @@
+{
+  "type": "module",
+  "scripts": {
+    "dev": "npx wrangler dev",
+    "deploy:dry-run": "npx wrangler deploy --dry-run",
+    "deploy": "npx wrangler deploy",
+    "cf-typegen": "npx wrangler types",
+    "test": "node --test"
+  }
+}

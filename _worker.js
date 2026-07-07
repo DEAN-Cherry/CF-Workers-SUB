@@ -1,62 +1,54 @@
 
 // 部署完成后在网址后面加上这个，获取自建节点和机场聚合节点，/?token=auto或/auto或
 
-let mytoken = 'auto';
-let guestToken = ''; //可以随便取，或者uuid生成，https://1024tools.com/uuid
-let BotToken = ''; //可以为空，或者@BotFather中输入/start，/newbot，并关注机器人
-let ChatID = ''; //可以为空，或者@userinfobot中获取，/start
-let TG = 0; //小白勿动， 开发者专用，1 为推送所有的访问信息，0 为不推送订阅转换后端的访问信息与异常访问
-let FileName = 'CF-Workers-SUB';
-let SUBUpdateTime = 6; //自定义订阅更新时间，单位小时
-let total = 99;//TB
-let timestamp = 4102329600000;//2099-12-31
+const DEFAULT_TOKEN = 'auto';
+const DEFAULT_FILENAME = 'CF-Workers-SUB';
+const DEFAULT_SUB_UPDATE_TIME = 6; //自定义订阅更新时间，单位小时
 
 //节点链接 + 订阅链接
-let MainData = `
+const DEFAULT_MAIN_DATA = `
 https://cfxr.eu.org/getSub
 `;
 
-let urls = [];
-let subConverter = "SUBAPI.cmliussss.net"; //在线订阅转换后端，目前使用CM的订阅转换功能。支持自建psub 可自行搭建https://github.com/bulianglin/psub
-let subConfig = "https://raw.githubusercontent.com/cmliu/ACL4SSR/main/Clash/config/ACL4SSR_Online_MultiCountry.ini"; //订阅配置文件
-let subProtocol = 'https';
+const DEFAULT_SUB_CONVERTER = "SUBAPI.cmliussss.net"; //在线订阅转换后端，目前使用CM的订阅转换功能。支持自建psub 可自行搭建https://github.com/bulianglin/psub
+const DEFAULT_SUB_CONFIG = "https://raw.githubusercontent.com/cmliu/ACL4SSR/main/Clash/config/ACL4SSR_Online_MultiCountry.ini"; //订阅配置文件
 
 export default {
-	async fetch(request, env) {
+	async fetch(request, env, ctx) {
+		try {
 		const userAgentHeader = request.headers.get('User-Agent');
 		const userAgent = userAgentHeader ? userAgentHeader.toLowerCase() : "null";
 		const url = new URL(request.url);
 		const token = url.searchParams.get('token');
-		mytoken = env.TOKEN || mytoken;
-		BotToken = env.TGTOKEN || BotToken;
-		ChatID = env.TGID || ChatID;
-		TG = env.TG || TG;
-		subConverter = env.SUBAPI || subConverter;
+		const mytoken = env.TOKEN || DEFAULT_TOKEN;
+		const tg = {
+			botToken: env.TGTOKEN || '',
+			chatID: env.TGID || '',
+			enabled: Number(env.TG || 0)
+		};
+		let subConverter = env.SUBAPI || DEFAULT_SUB_CONVERTER;
+		let subProtocol = 'https';
 		if (subConverter.includes("http://")) {
 			subConverter = subConverter.split("//")[1];
 			subProtocol = 'http';
 		} else {
 			subConverter = subConverter.split("//")[1] || subConverter;
 		}
-		subConfig = env.SUBCONFIG || subConfig;
-		FileName = env.SUBNAME || FileName;
+		const subConfig = env.SUBCONFIG || DEFAULT_SUB_CONFIG;
+		const FileName = env.SUBNAME || DEFAULT_FILENAME;
 
 		const currentDate = new Date();
 		currentDate.setHours(0, 0, 0, 0);
 		const timeTemp = Math.ceil(currentDate.getTime() / 1000);
 		const fakeToken = await MD5MD5(`${mytoken}${timeTemp}`);
-		guestToken = env.GUESTTOKEN || env.GUEST || guestToken;
-		if (!guestToken) guestToken = await MD5MD5(mytoken);
-		const 访客订阅 = guestToken;
-		//console.log(`${fakeUserID}\n${fakeHostName}`); // 打印fakeID
+		const 访客订阅 = env.GUESTTOKEN || env.GUEST || await MD5MD5(mytoken);
 
-		let UD = Math.floor(((timestamp - Date.now()) / timestamp * total * 1099511627776) / 2);
-		total = total * 1099511627776;
-		let expire = Math.floor(timestamp / 1000);
-		SUBUpdateTime = env.SUBUPTIME || SUBUpdateTime;
+		const SUBUpdateTime = env.SUBUPTIME || DEFAULT_SUB_UPDATE_TIME;
 
-		if (!([mytoken, fakeToken, 访客订阅].includes(token) || url.pathname == ("/" + mytoken) || url.pathname.includes("/" + mytoken + "?"))) {
-			if (TG == 1 && url.pathname !== "/" && url.pathname !== "/favicon.ico") await sendMessage(`#异常访问 ${FileName}`, request.headers.get('CF-Connecting-IP'), `UA: ${userAgent}</tg-spoiler>\n域名: ${url.hostname}\n<tg-spoiler>入口: ${url.pathname + url.search}</tg-spoiler>`);
+		const 允许访问 = [mytoken, fakeToken, 访客订阅].includes(token)
+			|| url.pathname === "/" + mytoken;
+		if (!允许访问) {
+			if (tg.enabled == 1 && url.pathname !== "/" && url.pathname !== "/favicon.ico") ctx.waitUntil(sendMessage(tg, `#异常访问 ${FileName}`, request.headers.get('CF-Connecting-IP'), `UA: ${userAgent}</tg-spoiler>\n域名: ${url.hostname}\n<tg-spoiler>入口: ${url.pathname + url.search}</tg-spoiler>`));
 			if (env.URL302) return Response.redirect(env.URL302, 302);
 			else if (env.URL) return await proxyURL(env.URL, url);
 			else return new Response(await nginx(), {
@@ -66,11 +58,13 @@ export default {
 				},
 			});
 		} else {
+			let MainData = DEFAULT_MAIN_DATA;
+			let urls = [];
 			if (env.KV) {
 				await 迁移地址列表(env, 'LINK.txt');
 				if (userAgent.includes('mozilla') && !url.search) {
-					await sendMessage(`#编辑订阅 ${FileName}`, request.headers.get('CF-Connecting-IP'), `UA: ${userAgentHeader}</tg-spoiler>\n域名: ${url.hostname}\n<tg-spoiler>入口: ${url.pathname + url.search}</tg-spoiler>`);
-					return await KV(request, env, 'LINK.txt', 访客订阅);
+					ctx.waitUntil(sendMessage(tg, `#编辑订阅 ${FileName}`, request.headers.get('CF-Connecting-IP'), `UA: ${userAgentHeader}</tg-spoiler>\n域名: ${url.hostname}\n<tg-spoiler>入口: ${url.pathname + url.search}</tg-spoiler>`));
+					return await KV(request, env, 'LINK.txt', 访客订阅, { FileName, mytoken, subProtocol, subConverter, subConfig });
 				} else {
 					MainData = await env.KV.get('LINK.txt') || MainData;
 				}
@@ -90,7 +84,7 @@ export default {
 			}
 			MainData = 自建节点;
 			urls = await ADD(订阅链接);
-			await sendMessage(`#获取订阅 ${FileName}`, request.headers.get('CF-Connecting-IP'), `UA: ${userAgentHeader}</tg-spoiler>\n域名: ${url.hostname}\n<tg-spoiler>入口: ${url.pathname + url.search}</tg-spoiler>`);
+			ctx.waitUntil(sendMessage(tg, `#获取订阅 ${FileName}`, request.headers.get('CF-Connecting-IP'), `UA: ${userAgentHeader}</tg-spoiler>\n域名: ${url.hostname}\n<tg-spoiler>入口: ${url.pathname + url.search}</tg-spoiler>`));
 			const isSubConverterRequest = request.headers.get('subconverter-request') || request.headers.get('subconverter-version') || userAgent.includes('subconverter');
 			let 订阅格式 = 'base64';
 			if (!(userAgent.includes('null') || isSubConverterRequest || userAgent.includes('nekobox') || userAgent.includes(('CF-Workers-SUB').toLowerCase()))) {
@@ -214,6 +208,13 @@ export default {
 				return new Response(base64Data, { headers: responseHeaders });
 			}
 		}
+		} catch (error) {
+			console.error('处理请求时发生错误:', error);
+			return new Response("服务器错误: " + error.message, {
+				status: 500,
+				headers: { "Content-Type": "text/plain;charset=utf-8" }
+			});
+		}
 	}
 };
 
@@ -258,8 +259,8 @@ async function nginx() {
 	return text;
 }
 
-async function sendMessage(type, ip, add_data = "") {
-	if (BotToken !== '' && ChatID !== '') {
+async function sendMessage(tg, type, ip, add_data = "") {
+	if (tg.botToken !== '' && tg.chatID !== '') {
 		let msg = "";
 		const response = await fetch(`http://ip-api.com/json/${ip}?lang=zh-CN`);
 		if (response.status == 200) {
@@ -269,7 +270,7 @@ async function sendMessage(type, ip, add_data = "") {
 			msg = `${type}\nIP: ${ip}\n<tg-spoiler>${add_data}`;
 		}
 
-		let url = "https://api.telegram.org/bot" + BotToken + "/sendMessage?chat_id=" + ChatID + "&parse_mode=HTML&text=" + encodeURIComponent(msg);
+		let url = "https://api.telegram.org/bot" + tg.botToken + "/sendMessage?chat_id=" + tg.chatID + "&parse_mode=HTML&text=" + encodeURIComponent(msg);
 		return fetch(url, {
 			method: 'get',
 			headers: {
@@ -366,28 +367,24 @@ async function proxyURL(proxyURL, url) {
 	return newResponse;
 }
 
-async function getSUB(api, request, 追加UA, userAgentHeader) {
+async function getSUB(api, request, 追加UA, userAgentHeader, timeoutMs = 5000) {
 	if (!api || api.length === 0) {
-		return [];
+		return [[], ""];
 	} else api = [...new Set(api)]; // 去重
 	let newapi = "";
 	let 订阅转换URLs = "";
 	let 异常订阅 = "";
-	const controller = new AbortController(); // 创建一个AbortController实例，用于取消请求
-	const timeout = setTimeout(() => {
-		controller.abort(); // 2秒后取消所有请求
-	}, 2000);
 
 	try {
 		// 使用Promise.allSettled等待所有API请求完成，无论成功或失败
-		const responses = await Promise.allSettled(api.map(apiUrl => getUrl(request, apiUrl, 追加UA, userAgentHeader).then(response => response.ok ? response.text() : Promise.reject(response))));
+		const responses = await Promise.allSettled(api.map(apiUrl => getUrl(request, apiUrl, 追加UA, userAgentHeader, timeoutMs).then(response => response.ok ? response.text() : Promise.reject(response))));
 
 		// 遍历所有响应
 		const modifiedResponses = responses.map((response, index) => {
 			// 检查是否请求成功
 			if (response.status === 'rejected') {
 				const reason = response.reason;
-				if (reason && reason.name === 'AbortError') {
+				if (reason && (reason.name === 'AbortError' || reason.name === 'TimeoutError')) {
 					return {
 						status: '超时',
 						value: null,
@@ -435,8 +432,6 @@ async function getSUB(api, request, 追加UA, userAgentHeader) {
 		}
 	} catch (error) {
 		console.error(error); // 捕获并输出错误信息
-	} finally {
-		clearTimeout(timeout); // 清除定时器
 	}
 
 	const 订阅内容 = await ADD(newapi + 异常订阅); // 将处理后的内容转换为数组
@@ -444,26 +439,34 @@ async function getSUB(api, request, 追加UA, userAgentHeader) {
 	return [订阅内容, 订阅转换URLs];
 }
 
-async function getUrl(request, targetUrl, 追加UA, userAgentHeader) {
+async function getUrl(request, targetUrl, 追加UA, userAgentHeader, timeoutMs = 5000) {
 	// 设置自定义 User-Agent
-	const newHeaders = new Headers(request.headers);
+	const newHeaders = new Headers();
+	newHeaders.set("Accept", request.headers.get("Accept") || "*/*");
+	newHeaders.set("Accept-Encoding", "gzip, deflate, br");
 	newHeaders.set("User-Agent", `${atob('djJyYXlOLzYuNDU=')} cmliu/CF-Workers-SUB ${追加UA}(${userAgentHeader})`);
-
-	// 构建新的请求对象
-	const modifiedRequest = new Request(targetUrl, {
+	const target = new URL(targetUrl);
+	const requestInit = {
 		method: request.method,
 		headers: newHeaders,
-		body: request.method === "GET" ? null : request.body,
+		body: request.method === "GET" || request.method === "HEAD" ? null : request.body,
 		redirect: "follow",
-		cf: {
+		signal: AbortSignal.timeout(timeoutMs)
+	};
+
+	if (target.protocol === "https:") {
+		requestInit.cf = {
 			// 忽略SSL证书验证
 			insecureSkipVerify: true,
 			// 允许自签名证书
 			allowUntrusted: true,
 			// 禁用证书验证
 			validateCertificate: false
-		}
-	});
+		};
+	}
+
+	// 构建新的请求对象
+	const modifiedRequest = new Request(targetUrl, requestInit);
 
 	// 输出请求的详细信息
 	console.log(`请求URL: ${targetUrl}`);
@@ -474,7 +477,6 @@ async function getUrl(request, targetUrl, 追加UA, userAgentHeader) {
 	// 发送请求并返回响应
 	return fetch(modifiedRequest);
 }
-
 function isValidBase64(str) {
 	// 先移除所有空白字符(空格、换行、回车等)
 	const cleanStr = str.replace(/\s/g, '');
@@ -496,7 +498,14 @@ async function 迁移地址列表(env, txt = 'ADD.txt') {
 	return false;
 }
 
-async function KV(request, env, txt = 'ADD.txt', guest) {
+async function KV(request, env, txt = 'ADD.txt', guest, config = {}) {
+	const {
+		FileName = DEFAULT_FILENAME,
+		mytoken = DEFAULT_TOKEN,
+		subProtocol = 'https',
+		subConverter = DEFAULT_SUB_CONVERTER,
+		subConfig = DEFAULT_SUB_CONFIG
+	} = config;
 	const url = new URL(request.url);
 	try {
 		// POST请求处理
@@ -826,3 +835,5 @@ async function KV(request, env, txt = 'ADD.txt', guest) {
 		});
 	}
 }
+
+export { getSUB, getUrl };
