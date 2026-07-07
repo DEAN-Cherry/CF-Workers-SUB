@@ -4,6 +4,13 @@
 
 这是一个将多个节点和订阅合并为单一链接的工具，支持自动适配与自定义分流，简化了订阅管理。
 
+> 本仓库为 [cmliu/CF-Workers-SUB](https://github.com/cmliu/CF-Workers-SUB) 的改进版 fork，已不再与上游同步。主要改进：
+> - **上游订阅 KV 缓存 + 后台刷新（SWR）**：缓存新鲜期内直接返回，无需实时抓取全部上游；缓存过期时先秒回旧数据、后台刷新；上游抓取失败/超时自动回退旧缓存，单个上游故障不再导致节点缺失
+> - **单点失败隔离**：某个上游超时或报错时，其余上游正常聚合返回（每个上游独立 5 秒超时）
+> - **纯 IP 订阅支持**：支持 `http://1.2.3.4:8080/...` 形式的原始 IP 订阅链接
+> - **出站请求最小化头部**：不再向上游订阅服务器转发客户端的 `Authorization`、`Cookie` 等敏感请求头
+> - **配置现代化**：`wrangler.jsonc` 管理 Worker 名称、KV 绑定与部署；附带零依赖回归测试（`npm test`）
+
 > [!CAUTION]
 > **汇聚订阅非base64订阅时**，会自动生成一个**有效期为24小时的临时订阅**，并提交给**订阅转换后端**来完成订阅转换，可避免您的汇聚订阅地址泄露。
 
@@ -107,6 +114,15 @@
 | SUBNAME | `CF-Workers-SUB` | ❌ | 订阅名称 |
 | SUBAPI | `SUBAPI.cmliussss.net` | ❌ | clash、singbox等 订阅转换后端 | 
 | SUBCONFIG | [https://raw.github.../ACL4SSR_Online_MultiCountry.ini](https://raw.githubusercontent.com/cmliu/ACL4SSR/main/Clash/config/ACL4SSR_Online_MultiCountry.ini) | ❌ | clash、singbox等 订阅转换配置文件 | 
+| CACHE_TTL | `15` | ❌ | 上游订阅缓存有效期（分钟），默认 `15`；需绑定 KV 后生效 |
+
+## ⚡ 订阅缓存说明
+绑定 KV 命名空间后自动启用上游订阅缓存（stale-while-revalidate）：
+
+- 缓存有效期内（默认 15 分钟，可用 `CACHE_TTL` 变量调整）直接返回缓存内容，不请求上游，响应更快
+- 缓存过期后立即返回旧数据，同时在后台刷新缓存，客户端无感知
+- 上游抓取失败或超时时，自动回退到最近一次成功的缓存内容，避免节点突然缺失
+- 在订阅地址后追加 `&nocache`（或 `?nocache`）可跳过缓存强制实时抓取，例如：`https://sub.example.com/auto?nocache`
 
 
 ## ⚠️ 注意事项
