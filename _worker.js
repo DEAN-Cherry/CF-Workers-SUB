@@ -116,7 +116,13 @@ export default {
 
 			const 订阅链接数组 = [...new Set(urls)].filter(item => item?.trim?.()); // 去重
 			if (订阅链接数组.length > 0) {
-				const 请求订阅响应内容 = await getSUB(订阅链接数组, request, 追加UA, userAgentHeader);
+				const 缓存配置 = env.KV ? {
+					kv: env.KV,
+					ctx,
+					ttlMs: Number(env.CACHE_TTL || 15) * 60 * 1000,
+					nocache: url.searchParams.has('nocache')
+				} : null;
+				const 请求订阅响应内容 = await getSUB(订阅链接数组, request, 追加UA, userAgentHeader, 5000, 缓存配置);
 				console.log(请求订阅响应内容);
 				req_data += 请求订阅响应内容[0].join('\n');
 				订阅转换URL += "|" + 请求订阅响应内容[1];
@@ -367,7 +373,58 @@ async function proxyURL(proxyURL, url) {
 	return newResponse;
 }
 
-async function getSUB(api, request, 追加UA, userAgentHeader, timeoutMs = 5000) {
+// 拉取单个上游订阅内容，带 KV 缓存（stale-while-revalidate）
+// cache: { kv, ctx, ttlMs, nocache } 或 null（不启用缓存）
+async function fetchSUBContent(request, apiUrl, 追加UA, userAgentHeader, timeoutMs, cache) {
+	let cacheKey = null;
+	let stale = null; // 过期但可用的旧缓存
+	if (cache?.kv) {
+		cacheKey = 'SUBCACHE:' + await MD5MD5(apiUrl);
+		if (!cache.nocache) {
+			const cached = await cache.kv.getWithMetadata(cacheKey);
+			if (cached && cached.value != null) {
+				const ts = Number(cached.metadata?.ts || 0);
+				if (Date.now() - ts < cache.ttlMs) {
+					console.log(`缓存命中(新鲜): ${apiUrl}`);
+					return cached.value;
+				}
+				stale = cached.value;
+			}
+		}
+	}
+
+	const doFetch = async () => {
+		const response = await getUrl(request, apiUrl, 追加UA, userAgentHeader, timeoutMs);
+		if (!response.ok) throw response;
+		const content = await response.text();
+		if (cacheKey) await cache.kv.put(cacheKey, content, { metadata: { ts: Date.now() } });
+		return content;
+	};
+
+	if (stale != null) {
+		// 缓存过期：立即返回旧数据，后台刷新
+		console.log(`缓存命中(过期,后台刷新): ${apiUrl}`);
+		if (cache.ctx) cache.ctx.waitUntil(doFetch().catch(() => {}));
+		else doFetch().catch(() => {});
+		return stale;
+	}
+
+	try {
+		return await doFetch();
+	} catch (err) {
+		// 抓取失败：回退到旧缓存（含 nocache 场景）
+		if (cacheKey) {
+			const fallback = await cache.kv.get(cacheKey);
+			if (fallback != null) {
+				console.log(`抓取失败,回退旧缓存: ${apiUrl}`);
+				return fallback;
+			}
+		}
+		throw err;
+	}
+}
+
+async function getSUB(api, request, 追加UA, userAgentHeader, timeoutMs = 5000, cache = null) {
 	if (!api || api.length === 0) {
 		return [[], ""];
 	} else api = [...new Set(api)]; // 去重
@@ -377,7 +434,7 @@ async function getSUB(api, request, 追加UA, userAgentHeader, timeoutMs = 5000)
 
 	try {
 		// 使用Promise.allSettled等待所有API请求完成，无论成功或失败
-		const responses = await Promise.allSettled(api.map(apiUrl => getUrl(request, apiUrl, 追加UA, userAgentHeader, timeoutMs).then(response => response.ok ? response.text() : Promise.reject(response))));
+		const responses = await Promise.allSettled(api.map(apiUrl => fetchSUBContent(request, apiUrl, 追加UA, userAgentHeader, timeoutMs, cache)));
 
 		// 遍历所有响应
 		const modifiedResponses = responses.map((response, index) => {
